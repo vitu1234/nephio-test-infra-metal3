@@ -1,0 +1,72 @@
+---
+# vars file for capa
+
+service_names:
+- "docker"
+- "kubelet"
+
+clusterctl_version: v1.8.3
+
+cloud_name_key: "openstack"
+auth_url: "http://192.168.24.13:5000/v3/"
+application_credential_id: "4d59a11231854643be93e4f8b8e57a76"
+application_credential_secret: "kWz4bDkYkE_VIqVghXl4qRL62BXgQ6PfMmNOzzqspVwQvUSl1vqswoLrXLUfcEVgWFiFltXDAF1WBbxlySLyHQ"
+region_name: "RegionOne"
+interface: "public"
+identity_api_version: 3
+# auth_type: "v3applicationcredential"
+
+openstack_dns_nameservers: "8.8.8.8"
+openstack_failure_domain: "compute"
+openstack_control_plane_machine_flavor: "m1.large"
+openstack_node_machine_flavor: "m1.xlarge"
+openstack_image_name: "Ubuntu22-CAPI"
+openstack_ssh_key_name: "karmada-kt-24"
+openstack_external_network_id: "88e1ee39-f1e8-4b1b-b77a-a819a366da2b"
+
+#DHCP server
+# metal3 configurations
+# The same HTTP port must be provided to all containers!
+HTTP_PORT: 6180
+# Specify the MAC addresses (separated by ;) of the hosts we know about and want to use
+DHCP_HOSTS: a4:bf:01:74:55:e6;a4:bf:01:74:55:e5;a4:bf:01:71:45:f8;a4:bf:01:71:45:f9
+# Ignore unknown hosts so we don't accidentally give out IP addresses to other hosts in the network
+DHCP_IGNORE: tag:!known
+# Listen on this IP (management computer)
+PROVISIONING_IP: 192.168.40.241
+# Give out IP addresses in this range
+DHCP_RANGE: 192.168.40.127,192.168.40.140
+GATEWAY_IP: 192.168.40.1
+
+# Image server
+IMG_URL: https://artifactory.nordix.org/artifactory/metal3/images/k8s_v1.29/UBUNTU_9_NODE_IMAGE_K8S_v1.29
+
+# Ironic configurations
+IRONIC_USERNAME: admin
+IRONIC_PASSWORD: tp876957
+INSPECTOR_USERNAME: admin
+INSPECTOR_PASSWORD: tp876957
+
+# In this section we will create a file containing environment variables used to configure Ironic and related components. We will call the file ironic_bmo.env. It looks like this for the baremetal lab:
+# This is the interface inside the container
+PROVISIONING_INTERFACE: eno2
+IRONIC_KERNEL_PARAMS: console=ttyS0
+# CACHEURL: http://192.168.40.241
+#  IP where the BMCs can access Ironic to get the virtualmedia boot image.
+# This is the IP of the management computer in the out of band network.
+IRONIC_EXTERNAL_IP: 192.168.40.241 # equals PROVISIONING_IP
+# URLs where the servers can callback during inspection.
+# IP of management computer in the other network and same ports as in kind.yaml
+#PROVISIONING_IP + another port
+IRONIC_EXTERNAL_CALLBACK_URL: https://192.168.40.241:6385
+#PROVISIONING_IP + another port
+IRONIC_INSPECTOR_CALLBACK_ENDPOINT_OVERRIDE: https://192.168.40.241:5050
+
+auth_type: http_basic
+username: admin
+password: tp876957
+
+# Remember to add this
+# DEPLOY_KERNEL_URL=http://192.168.40.241:6180/images/ironic-python-agent.kernel
+# DEPLOY_RAMDISK_URL=http://192.168.40.241:6180/images/ironic-python-agent.initramfs
+# IRONIC_ENDPOINT=https://192.168.40.241:6385/v1/
