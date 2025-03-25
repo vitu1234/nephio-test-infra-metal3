@@ -1,101 +1,301 @@
 ---
-# tasks file for capo
 
-- name: Ensure the ~/.config/openstack directory exists
+- name: Ensure the ~/.config/metal3 directory exists
   ansible.builtin.file:
-    path: "~/.config/openstack"
+    path: "~/.config/metal3"
     state: directory
     mode: '0700'
 
-- name: Create and populate the clouds.yaml file
+- name: download and install kustomize
+  become: yes
+  become_method: sudo
+  command: snap install kustomize --classic
+
+- name: Ensure the ~/.config/metal3/disk-images directory exists
+  ansible.builtin.file:
+    path: "~/.config/metal3/disk-images"
+    state: directory
+    mode: '0700'
+
+- name: Ensure the ~/.config/metal3/ironic directory exists
+  ansible.builtin.file:
+    path: "~/.config/metal3/ironic"
+    state: directory
+    mode: '0700'
+
+- name: Ensure the ~/.config/metal3/bmo directory exists
+  ansible.builtin.file:
+    path: "~/.config/metal3/bmo"
+    state: directory
+    mode: '0700'
+
+# tasks file for DHCP server
+- name: Create and populate the dnsmasq.env file
   ansible.builtin.copy:
-    dest: "~/.config/openstack/clouds.yaml"
+    dest: "~/.config/metal3/dnsmasq.env"
     content: |
-      clouds:
-        {{ cloud_name_key }}:
-          auth:
-            auth_url: "{{ auth_url }}"
-            application_credential_id: "{{ application_credential_id }}"
-            application_credential_secret: "{{ application_credential_secret }}"
-          region_name: "{{ region_name }}"
-          interface: "{{ interface }}"
-          identity_api_version: {{ identity_api_version }}
-          auth_type: "{{ auth_type }}"
+      # The same HTTP port must be provided to all containers!
+      HTTP_PORT={{ HTTP_PORT }}
+      # Specify the MAC addresses (separated by ;) of the hosts we know about and want to use
+      DHCP_HOSTS={{ DHCP_HOSTS }}
+      # Ignore unknown hosts so we don't accidentally give out IP addresses to other hosts in the network
+      DHCP_IGNORE={{ DHCP_IGNORE }}
+      # Listen on this IP (management computer)
+      PROVISIONING_IP={{ PROVISIONING_IP }}
+      # Give out IP addresses in this range
+      DHCP_RANGE={{ DHCP_RANGE }}
+      GATEWAY_IP={{ GATEWAY_IP }}
     mode: '0600'
 
-- name: Ensure ~/.bashrc exists
-  ansible.builtin.file:
-    path: "~/.bashrc"
-    state: touch
+# image server
+- name: Get image filename from URL
+  set_fact:
+    image_filename: "{{ image_url | basename }}"
 
-- name: Ensure OpenStack environment variables section is present in ~/.bashrc
-  ansible.builtin.lineinfile:
-    path: "~/.bashrc"
-    line: '# OpenStack environment variables'
-    create: yes
-    insertafter: EOF
-    state: present
+- name: Download Cloud Image
+  get_url:
+    url: "{{ IMG_URL }}"
+    dest: "disk-images/{{ image_filename }}"
+    mode: '0644'
 
-- name: Ensure OpenStack DNS Nameservers is set in ~/.bashrc
-  ansible.builtin.lineinfile:
-    path: "~/.bashrc"
-    line: 'export OPENSTACK_DNS_NAMESERVERS={{ openstack_dns_nameservers }}'
-    create: yes
-    insertafter: '# OpenStack environment variables'
-    state: present
+- name: Run dnsmasq container for Metal3
+  docker_container:
+    name: dnsmasq
+    image: quay.io/metal3-io/ironic
+    state: started
+    restart_policy: unless-stopped
+    network_mode: host
+    privileged: yes
+    user: "997:994"
+    env_file: ~/.config/metal3/dnsmasq.env
+    command: /bin/rundnsmasq
+    auto_remove: yes
 
-- name: Ensure OpenStack Failure Domain is set in ~/.bashrc
-  ansible.builtin.lineinfile:
-    path: "~/.bashrc"
-    line: 'export OPENSTACK_FAILURE_DOMAIN={{ openstack_failure_domain }}'
-    create: yes
-    insertafter: '# OpenStack environment variables'
-    state: present
+- name: Run image-server container with Nginx
+  docker_container:
+    name: image-server
+    image: nginxinc/nginx-unprivileged
+    state: started
+    ports:
+    - "80:8080"
+    volumes:
+    - "~/.config/metal3/disk-images:/usr/share/nginx/html"
+    restart_policy: unless-stopped
+    auto_remove: yes
 
-- name: Ensure OpenStack Control Plane Machine Flavor is set in ~/.bashrc
-  ansible.builtin.lineinfile:
-    path: "~/.bashrc"
-    line: 'export OPENSTACK_CONTROL_PLANE_MACHINE_FLAVOR={{ openstack_control_plane_machine_flavor }}'
-    create: yes
-    insertafter: '# OpenStack environment variables'
-    state: present
+# configure Ironic
+- name: Create and populate the ironic-auth-config file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/ironic/ironic-auth-config"
+    content: |
+      [ironic]
+      auth_type=http_basic
+      username={{ IRONIC_USERNAME }}
+      password={{ IRONIC_PASSWORD }}
+    mode: '0600'
 
-- name: Ensure OpenStack Node Machine Flavor is set in ~/.bashrc
-  ansible.builtin.lineinfile:
-    path: "~/.bashrc"
-    line: 'export OPENSTACK_NODE_MACHINE_FLAVOR={{ openstack_node_machine_flavor }}'
-    create: yes
-    insertafter: '# OpenStack environment variables'
-    state: present
+- name: Create and populate the ironic-inspector-auth-config file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/ironic/ironic-inspector-auth-config"
+    content: |
+      [inspector]
+      auth_type=http_basic
+      username={{ INSPECTOR_USERNAME }}
+      password={{ INSPECTOR_PASSWORD }}
+    mode: '0600'
 
-- name: Ensure OpenStack Image Name is set in ~/.bashrc
-  ansible.builtin.lineinfile:
-    path: "~/.bashrc"
-    line: 'export OPENSTACK_IMAGE_NAME={{ openstack_image_name }}'
-    create: yes
-    insertafter: '# OpenStack environment variables'
-    state: present
+- name: Create and populate the ironic-htpasswd file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/ironic/ironic-htpasswd"
+    content: |
+      IRONIC_HTPASSWD="<output of `htpasswd -n -b -B IRONIC_USERNAME IRONIC_PASSWORD`>"
+    mode: '0600'
 
-- name: Ensure OpenStack SSH Key Name is set in ~/.bashrc
-  ansible.builtin.lineinfile:
-    path: "~/.bashrc"
-    line: 'export OPENSTACK_SSH_KEY_NAME={{ openstack_ssh_key_name }}'
-    create: yes
-    insertafter: '# OpenStack environment variables'
-    state: present
+- name: Create and populate the ironic-inspector-htpasswd file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/ironic/ironic-inspector-htpasswd"
+    content: |
+      INSPECTOR_HTPASSWD="<output of `htpasswd -n -b -B INSPECTOR_USERNAME INSPECTOR_PASSWORD`>"
+    mode: '0600'
 
-- name: Ensure OpenStack External Network ID is set in ~/.bashrc
-  ansible.builtin.lineinfile:
-    path: "~/.bashrc"
-    line: 'export OPENSTACK_EXTERNAL_NETWORK_ID={{ openstack_external_network_id }}'
-    create: yes
-    insertafter: '# OpenStack environment variables'
-    state: present
+- name: Create and populate the ironic_bmo.env file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/ironic/ironic_bmo.env"
+    content: |
+      # Same port as exposed in kind.yaml
+      HTTP_PORT={{ HTTP_PORT }}
+      # This is the interface inside the container
+      PROVISIONING_INTERFACE={{ PROVISIONING_INTERFACE }}
+      # URL where the http server is exposed (IP of management computer)
+      CACHEURL={{ PROVISIONING_IP }}
+      IRONIC_KERNEL_PARAMS={{ IRONIC_KERNEL_PARAMS }}
+      # IP where the BMCs can access Ironic to get the virtualmedia boot image.
+      # This is the IP of the management computer in the out of band network.
+      IRONIC_EXTERNAL_IP={{ PROVISIONING_IP }}
+      # URLs where the servers can callback during inspection.
+      # IP of management computer in the other network and same ports as in kind.yaml
+      IRONIC_EXTERNAL_CALLBACK_URL=https://{{ PROVISIONING_IP }}:{{ IRONIC_EXTERNAL_CALLBACK_URL_PORT}}
+      IRONIC_INSPECTOR_CALLBACK_ENDPOINT_OVERRIDE=https://{{ PROVISIONING_IP }}:{{ IRONIC_INSPECTOR_CALLBACK_ENDPOINT_OVERRIDE_PORT }}
+    mode: '0600'
 
-- name: Source the ~/.bashrc file to apply changes 
-  ansible.builtin.shell:
-    cmd: "source ~/.bashrc"
-    executable: /bin/bash
+- name: Create and populate the ironic-patch.yaml file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/ironic/ironic-patch.yaml"
+    content: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ironic
+      spec:
+        template:
+          spec:
+            containers:
+            - name: ironic-dnsmasq
+              $patch: delete
+    mode: '0600'
+
+- name: Create and populate the kustomization.yaml file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/ironic/kustomization.yaml"
+    content: |
+      apiVersion: kustomize.config.k8s.io/v1beta1
+      kind: Kustomization
+      namespace: baremetal-operator-system
+      resources:
+      - https://github.com/metal3-io/baremetal-operator/config/namespace?ref=v0.5.1
+      - https://github.com/metal3-io/baremetal-operator/ironic-deployment/base?ref=v0.5.1
+      components:
+      - https://github.com/metal3-io/baremetal-operator/ironic-deployment/components/basic-auth?ref=v0.5.1
+      - https://github.com/metal3-io/baremetal-operator/ironic-deployment/components/tls?ref=v0.5.1
+      images:
+      - name: quay.io/metal3-io/ironic
+        newTag: v24.0.0
+      configMapGenerator:
+      - envs:
+        - ~/.config/metal3/ironic/ironic_bmo.env
+        name: ironic-bmo-configmap
+        behavior: create
+
+      patches:
+      # Patch for removing dnsmasq
+      - path: ~/.config/metal3/ironic/ironic-patch.yaml
+      - patch: |-
+          - op: replace
+            path: /spec/ipAddresses/0
+            value: {{ PROVISIONING_IP }}
+        target:
+          kind: Certificate
+          name: ironic-cert|ironic-inspector-cert
+      - patch: |-
+          - op: remove
+            path: /spec/ipAddresses
+        target:
+          kind: Certificate
+          name: ironic-cacert
+      secretGenerator:
+      - name: ironic-htpasswd
+        behavior: create
+        envs:
+        - ironic-htpasswd
+      - name: ironic-inspector-htpasswd
+        behavior: create
+        envs:
+        - ironic-inspector-htpasswd
+      - name: ironic-auth-config
+        files:
+        - auth-config=ironic-auth-config
+      - name: ironic-inspector-auth-config
+        files:
+        - auth-config=ironic-inspector-auth-config
+    mode: '0600'
+
+- name: Check the manifests with ironic kustomize
+  become: yes
+  become_method: sudo
+  shell: kubectl create -k ~/.config/metal3/ironic --dry-run=client -o yaml
+
+- name: Apply Ironic manifests kustomize
+  become: yes
+  become_method: sudo
+  shell: kubectl apply -k ~/.config/metal3/ironic
+
+# Deploy Bare Metal Operator
+- name: Create and populate the bmo-ironic-username file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/bmo/ironic-username"
+    content: |
+      {{ IRONIC_USERNAME }}
+    mode: '0600'
+
+- name: Create and populate the bmo-ironic-password file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/bmo/ironic-password"
+    content: |
+      {{ IRONIC_PASSWORD }}
+    mode: '0600'
+
+- name: Create and populate the bmo-ironic-inspector-username file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/bmo/ironic-inspector-username"
+    content: |
+      {{ INSPECTOR_USERNAME }}
+    mode: '0600'
+
+- name: Create and populate the bmo-ironic-inspector-password file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/bmo/ironic-inspector-password"
+    content: |
+      {{ INSPECTOR_PASSWORD }}
+    mode: '0600'
+
+- name: Create and populate the bmo-ironic.env file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/bmo/ironic.env"
+    content: |
+      DEPLOY_KERNEL_URL=http://{{ PROVISIONING_IP }}:{{ HTTP_PORT }}/images/ironic-python-agent.kernel
+      DEPLOY_RAMDISK_URL=http://{{ PROVISIONING_IP }}:{{ HTTP_PORT }}/images/ironic-python-agent.initramfs
+      IRONIC_ENDPOINT=https://{{ PROVISIONING_IP }}:{{ IRONIC_EXTERNAL_CALLBACK_URL_PORT }}/v1/
+    mode: '0600'
+
+- name: Create and populate the bmo-kustomization.yaml file
+  ansible.builtin.copy:
+    dest: "~/.config/metal3/bmo/kustomization.yaml"
+    content: |
+      apiVersion: kustomize.config.k8s.io/v1beta1
+      kind: Kustomization
+      namespace: baremetal-operator-system
+      resources:
+      - https://github.com/metal3-io/baremetal-operator/config/overlays/basic-auth_tls?ref=v0.5.1
+      images:
+      - name: quay.io/metal3-io/baremetal-operator
+        newTag: v0.5.1
+      configMapGenerator:
+      - name: ironic
+        behavior: create
+        envs:
+        - ~/.config/metal3/bmo/ironic.env
+      generatorOptions:
+        disableNameSuffixHash: true
+      secretGenerator:
+      - name: ironic-credentials
+        files:
+        - username=~/.config/metal3/bmo/ironic-username
+        - password=~/.config/metal3/bmo/ironic-password
+      - name: ironic-inspector-credentials
+        files:
+        - username=~/.config/metal3/bmo/ironic-inspector-username
+        - password=~/.config/metal3/bmo/ironic-inspector-password
+    mode: '0600'
+
+- name: Check the manifests with bmo kustomize
+  become: yes
+  become_method: sudo
+  shell: kubectl create -k ~/.config/metal3/bmo --dry-run=client -o yaml
+
+- name: Apply bmo kustomize manifests
+  become: yes
+  become_method: sudo
+  shell: kubectl apply -k ~/.config/metal3/bmo
 
 - name: Download clusterctl binary
   become: yes
@@ -113,4 +313,4 @@
 - name: Initialize management cluster
   become: yes
   become_method: sudo
-  shell: clusterctl init --infrastructure openstack
+  shell: clusterctl init --infrastructure metal3
