@@ -8,10 +8,10 @@ repository.
 Nephio Project Official [Here](https://github.com/nephio-project/test-infra.git)
 
 ### Same project configured for running on AWS EC2
-Nephio AWS[Here](https://github.com/vitu1234/nephio-test-infra-aws.git) 
+Nephio AWS [Here](https://github.com/vitu1234/nephio-test-infra-aws.git) 
 
 ### Same project configured for running on OpenStack
-Nephio OpenStack[Here](https://github.com/vitu1234/nephio-test-infra-openstack.git) 
+Nephio OpenStack [Here](https://github.com/vitu1234/nephio-test-infra-openstack.git) 
 
 ### Run the following Galaxy commands
 ansible-galaxy collection install ansible.posix
