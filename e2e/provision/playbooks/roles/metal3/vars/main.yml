@@ -2,8 +2,8 @@
 # vars file for capa
 
 service_names:
-  - "docker"
-  - "kubelet"
+- "docker"
+- "kubelet"
 
 clusterctl_version: v1.8.3
 
@@ -16,10 +16,10 @@ DHCP_HOSTS: a4:bf:01:74:55:e6;a4:bf:01:74:55:e5;a4:bf:01:71:45:f8;a4:bf:01:71:45
 # Ignore unknown hosts so we don't accidentally give out IP addresses to other hosts in the network
 DHCP_IGNORE: tag:!known
 # Listen on this IP (management computer)
-PROVISIONING_IP: 192.168.40.241
+PROVISIONING_IP: 192.168.3.99
 # Give out IP addresses in this range
-DHCP_RANGE: 192.168.40.127,192.168.40.140
-GATEWAY_IP: 192.168.40.1
+DHCP_RANGE: 192.168.3.5,192.168.3.14
+GATEWAY_IP: 192.168.3.1
 
 # Image server
 IMG_URL: https://artifactory.nordix.org/artifactory/metal3/images/k8s_v1.29/UBUNTU_9_NODE_IMAGE_K8S_v1.29

@@ -8,12 +8,35 @@
     line: 'ubuntu ALL=(ALL) NOPASSWD: ALL'
     validate: 'visudo -cf %s'
 #k8s key is invalid sometimes, better remove and add a new one
-- name: remove old k8s key
-  ansible.builtin.shell:
-    cmd: sudo rm /etc/apt/sources.list.d/kubernetes.list
-    # Run with a specific shell to ensure compatibility
-    executable: /bin/bash
 
+- name: Remove unwanted Docker packages
+  become: yes
+  become_method: sudo
+  apt:
+    name:
+    - docker.io
+    - docker-doc
+    - docker-compose
+    - docker-compose-v2
+    - podman-docker
+    - containerd
+    - runc
+    state: absent
+
+- name: Remove Old Kubernetes configuration files if exists
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+  - /etc/kubernetes/*
+  - /var/lib/etcd/*
+  - /var/lib/kubelet/*
+
+- name: Remove old Kubernetes manifests file if it exists
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/kubernetes.list
+    state: absent
+  become: yes
 
 - name: add Kubernetes apt-key
   get_url:
@@ -28,7 +51,6 @@
     state: present
     update_cache: yes
 
-
 - name: apt update
   ansible.builtin.shell:
     cmd: sudo apt update
@@ -41,24 +63,21 @@
     # Run with a specific shell to ensure compatibility
     executable: /bin/bash
 
-
-
 - name: Install Unzip
   ansible.builtin.shell:
     cmd: sudo apt install unzip -y
     # Run with a specific shell to ensure compatibility
     executable: /bin/bash
 
+- name: disable SWAP (Kubeadm requirement)
+  shell: |
+    swapoff -a
 
-# - name: disable SWAP (Kubeadm requirement)
-#   shell: |
-#     swapoff -a
-
-# - name: disable SWAP in fstab (Kubeadm requirement)
-#   replace:
-#     path: /etc/fstab
-#     regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
-#     replace: '# \1'
+- name: disable SWAP in fstab (Kubeadm requirement)
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+    replace: '# \1'
 
 # - name: create an empty file for the Containerd module
 #   copy:
@@ -105,11 +124,33 @@
 - name: Gather facts
   setup:
 
-- name: add Docker's APT repository
+
+- name: Ensure the keyring directory exists
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Remove conflicting Docker GPG key if it exists
+  file:
+    path: /etc/apt/keyrings/docker.asc
+    state: absent
+  become: yes
+
+- name: Download and add Docker's official GPG key
+  get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker-apt-keyring.asc
+    mode: '0644'
+  become: yes
+
+- name: Add Docker's APT repository
   apt_repository:
     repo: "deb [arch={{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }} signed-by=/etc/apt/keyrings/docker-apt-keyring.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
     state: present
+    filename: docker
     update_cache: yes
+  become: yes
 
 # - name: add Kubernetes apt-key
 #   get_url:
@@ -124,68 +165,72 @@
 #     state: present
 #     update_cache: yes
 
-# - name: install Containerd
-#   apt:
-#     name: containerd.io
-#     state: present
+- name: install Condockertainerd
+  apt:
+    name: containerd.io
+    state: present
 
-# - name: create Containerd directory
-#   file:
-#     path: /etc/containerd
-#     state: directory
+- name: create Containerd directory
+  file:
+    path: /etc/containerd
+    state: directory
 
-# - name: add Containerd configuration
-#   shell: /usr/bin/containerd config default > /etc/containerd/config.toml
+- name: add Containerd configuration
+  shell: /usr/bin/containerd config default > /etc/containerd/config.toml
 
-# - name: configuring the systemd cgroup driver for Containerd
-#   lineinfile:
-#     path: /etc/containerd/config.toml
-#     regexp: '            SystemdCgroup = false'
-#     line: '            SystemdCgroup = true'
+- name: configuring the systemd cgroup driver for Containerd
+  lineinfile:
+    path: /etc/containerd/config.toml
+    regexp: '            SystemdCgroup = false'
+    line: '            SystemdCgroup = true'
 
-# - name: enable the Containerd service and start it
-#   systemd:
-#     name: containerd
-#     state: restarted
-#     enabled: yes
-#     daemon-reload: yes
+- name: enable the Containerd service and start it
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: yes
+    daemon-reload: yes
 
-# - name: install Kubelet
-#   apt:
-#     name: kubelet=1.29.*
-#     state: present
-#     update_cache: true
+- name: install Kubelet
+  apt:
+    name: kubelet=1.29.*
+    state: present
+    update_cache: true
 
-# - name: install Kubeadm
-#   apt:
-#     name: kubeadm=1.29.*
-#     state: present
+- name: install Kubeadm
+  apt:
+    name: kubeadm=1.29.*
+    state: present
 
-# - name: enable the Kubelet service, and enable it persistently
-#   service:
-#     name: kubelet
-#     enabled: yes
+- name: enable the Kubelet service, and enable it persistently
+  service:
+    name: kubelet
+    enabled: yes
 
-# - name: load br_netfilter kernel module
-#   community.general.modprobe:
-#     name: br_netfilter
-#     state: present
+- name: load br_netfilter kernel module
+  community.general.modprobe:
+    name: br_netfilter
+    state: present
 
-# - name: set bridge-nf-call-iptables
-#   ansible.posix.sysctl:
-#     name: net.bridge.bridge-nf-call-iptables
-#     value: 1
+- name: set bridge-nf-call-iptables
+  ansible.posix.sysctl:
+    name: net.bridge.bridge-nf-call-iptables
+    value: 1
 
-# - name: set ip_forward
-#   ansible.posix.sysctl:
-#     name: net.ipv4.ip_forward
-#     value: 1
+- name: set ip_forward
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: 1
 
-# - name: Pulling the images of k8s control node
-#   command: kubeadm config images pull
+- name: Pulling the images of k8s control node
+  become_method: sudo
+  command: kubeadm config images pull
 
+- name: Reset kubeadm if any exists to avoid conflicts
+  command: kubeadm reset -f
 
 - name: Initializing k8s cluster
+  become_method: sudo
   command: kubeadm init
 
 - name: Setting up kubectl on control Node
@@ -215,12 +260,20 @@
 
 - name: Display extracted context name
   debug:
-    msg: "Context name after '@' is: {{ context_name }}"    
+    msg: "Context name after '@' is: {{ context_name }}"
 
 - name: Rename current context name
-  command: kubectl config rename-context {{ original_current_context }} {{ context_name }} 
+  command: kubectl config rename-context {{ original_current_context }} {{ context_name }}
 
+# NEW untaint node to allow control plane scheduling
+- name: Get master node name
+  command: kubectl get nodes --selector='node-role.kubernetes.io/control-plane' -o jsonpath='{.items[0].metadata.name}'
+  register: master_node
 
+- name: Remove NoSchedule taint from master node
+  command: kubectl taint nodes {{ master_node.stdout }} node-role.kubernetes.io/control-plane:NoSchedule-
+  changed_when: true
+# --------------------END HERE
 
 - name: Get the latest Cilium CLI version
   shell: curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt
@@ -251,13 +304,11 @@
     path: /tmp/cilium-linux-{{ cli_arch }}.tar.gz{{ item }}
     state: absent
   loop:
-    - ''
-    - '.sha256sum'    
-
+  - ''
+  - '.sha256sum'
 
 - name: Run Cilium Installation on master node
   command: cilium install --set cluster.name={{ context_name }} --set cluster.id=1 --context {{ context_name }}
-
 
 - name: Creating token for Slave
   command: kubeadm token create  --print-join-command
@@ -268,14 +319,14 @@
 
 - name: Install Docker packages
   apt:
-    name: 
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose
+    name:
+    - docker-ce
+    - docker-ce-cli
+    - containerd.io
+    - docker-buildx-plugin
+    - docker-compose
     state: present
-  
+
 - name: Add user to docker group
   user:
     name: "ubuntu"
