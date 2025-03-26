@@ -50,7 +50,7 @@
 # image server
 - name: Get image filename from URL
   set_fact:
-    image_filename: "{{ image_url | basename }}"
+    image_filename: "{{ IMG_URL | basename }}"
 
 - name: Download Cloud Image
   get_url:
