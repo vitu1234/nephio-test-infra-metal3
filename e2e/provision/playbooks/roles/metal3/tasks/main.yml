@@ -1,8 +1,29 @@
 ---
+- name: Install cert-manager
+  command: kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/{{ CERT_MANAGER_VERSION }}/cert-manager.yaml
+  register: cert_manager_install
+  changed_when: "'created' in cert_manager_install.stdout"
 
-- name: Ensure the ~/.config/metal3 directory exists
+- name: Wait for cert-manager to be ready
+  shell: |
+    kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager \
+    && kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager-webhook \
+    && kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager-cainjector
+  register: cert_manager_wait
+  changed_when: false
+
+- name: Remove Old meta3 files if exists
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+  - "ironic/*"
+  - "disk-images/*"
+  - "bmo/*"
+
+- name: Ensure ironic directory exists
   ansible.builtin.file:
-    path: "~/.config/metal3"
+    path: "ironic"
     state: directory
     mode: '0700'
 
@@ -11,28 +32,28 @@
   become_method: sudo
   command: snap install kustomize --classic
 
-- name: Ensure the ~/.config/metal3/disk-images directory exists
+- name: Ensure the disk-images directory exists
   ansible.builtin.file:
-    path: "~/.config/metal3/disk-images"
+    path: "disk-images"
     state: directory
     mode: '0700'
 
-- name: Ensure the ~/.config/metal3/ironic directory exists
+- name: Ensure the ironic directory exists
   ansible.builtin.file:
-    path: "~/.config/metal3/ironic"
+    path: "ironic"
     state: directory
     mode: '0700'
 
-- name: Ensure the ~/.config/metal3/bmo directory exists
+- name: bmo directory exists
   ansible.builtin.file:
-    path: "~/.config/metal3/bmo"
+    path: "bmo"
     state: directory
     mode: '0700'
 
 # tasks file for DHCP server
 - name: Create and populate the dnsmasq.env file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/dnsmasq.env"
+    dest: "dnsmasq.env"
     content: |
       # The same HTTP port must be provided to all containers!
       HTTP_PORT={{ HTTP_PORT }}
@@ -50,7 +71,7 @@
 # image server
 - name: Get image filename from URL
   set_fact:
-    image_filename: "{{ image_url | basename }}"
+    image_filename: "{{ IMG_URL | basename }}"
 
 - name: Download Cloud Image
   get_url:
@@ -67,9 +88,8 @@
     network_mode: host
     privileged: yes
     user: "997:994"
-    env_file: ~/.config/metal3/dnsmasq.env
+    env_file: "dnsmasq.env"
     command: /bin/rundnsmasq
-    auto_remove: yes
 
 - name: Run image-server container with Nginx
   docker_container:
@@ -79,14 +99,13 @@
     ports:
     - "80:8080"
     volumes:
-    - "~/.config/metal3/disk-images:/usr/share/nginx/html"
+    - "disk-images:/usr/share/nginx/html"
     restart_policy: unless-stopped
-    auto_remove: yes
 
 # configure Ironic
 - name: Create and populate the ironic-auth-config file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/ironic/ironic-auth-config"
+    dest: "ironic/ironic-auth-config"
     content: |
       [ironic]
       auth_type=http_basic
@@ -96,7 +115,7 @@
 
 - name: Create and populate the ironic-inspector-auth-config file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/ironic/ironic-inspector-auth-config"
+    dest: "ironic/ironic-inspector-auth-config"
     content: |
       [inspector]
       auth_type=http_basic
@@ -106,21 +125,21 @@
 
 - name: Create and populate the ironic-htpasswd file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/ironic/ironic-htpasswd"
+    dest: "ironic/ironic-htpasswd"
     content: |
       IRONIC_HTPASSWD="<output of `htpasswd -n -b -B IRONIC_USERNAME IRONIC_PASSWORD`>"
     mode: '0600'
 
 - name: Create and populate the ironic-inspector-htpasswd file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/ironic/ironic-inspector-htpasswd"
+    dest: "ironic/ironic-inspector-htpasswd"
     content: |
       INSPECTOR_HTPASSWD="<output of `htpasswd -n -b -B INSPECTOR_USERNAME INSPECTOR_PASSWORD`>"
     mode: '0600'
 
 - name: Create and populate the ironic_bmo.env file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/ironic/ironic_bmo.env"
+    dest: "ironic/ironic_bmo.env"
     content: |
       # Same port as exposed in kind.yaml
       HTTP_PORT={{ HTTP_PORT }}
@@ -140,7 +159,7 @@
 
 - name: Create and populate the ironic-patch.yaml file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/ironic/ironic-patch.yaml"
+    dest: "ironic/ironic-patch.yaml"
     content: |
       apiVersion: apps/v1
       kind: Deployment
@@ -154,9 +173,9 @@
               $patch: delete
     mode: '0600'
 
-- name: Create and populate the kustomization.yaml file
+- name: Create and populate the metal3 kustomization file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/ironic/kustomization.yaml"
+    dest: "ironic/kustomization.yaml"
     content: |
       apiVersion: kustomize.config.k8s.io/v1beta1
       kind: Kustomization
@@ -172,13 +191,11 @@
         newTag: v24.0.0
       configMapGenerator:
       - envs:
-        - ~/.config/metal3/ironic/ironic_bmo.env
+        - ironic_bmo.env
         name: ironic-bmo-configmap
         behavior: create
-
       patches:
-      # Patch for removing dnsmasq
-      - path: ~/.config/metal3/ironic/ironic-patch.yaml
+      - path: ironic-patch.yaml
       - patch: |-
           - op: replace
             path: /spec/ipAddresses/0
@@ -209,48 +226,53 @@
         - auth-config=ironic-inspector-auth-config
     mode: '0600'
 
+# - name: Generate Kustomization YAML
+#   become: yes
+#   become_method: sudo
+#   command: cp kustomization-ironic.yaml.j2 ironic/kustomization.yaml
+
 - name: Check the manifests with ironic kustomize
   become: yes
   become_method: sudo
-  shell: kubectl create -k ~/.config/metal3/ironic --dry-run=client -o yaml
+  command: kubectl create -k ironic --dry-run=client -o yaml
 
 - name: Apply Ironic manifests kustomize
   become: yes
   become_method: sudo
-  shell: kubectl apply -k ~/.config/metal3/ironic
+  command: kubectl apply -k ironic
 
 # Deploy Bare Metal Operator
 - name: Create and populate the bmo-ironic-username file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/bmo/ironic-username"
+    dest: "bmo/ironic-username"
     content: |
       {{ IRONIC_USERNAME }}
     mode: '0600'
 
 - name: Create and populate the bmo-ironic-password file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/bmo/ironic-password"
+    dest: "bmo/ironic-password"
     content: |
       {{ IRONIC_PASSWORD }}
     mode: '0600'
 
 - name: Create and populate the bmo-ironic-inspector-username file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/bmo/ironic-inspector-username"
+    dest: "bmo/ironic-inspector-username"
     content: |
       {{ INSPECTOR_USERNAME }}
     mode: '0600'
 
 - name: Create and populate the bmo-ironic-inspector-password file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/bmo/ironic-inspector-password"
+    dest: "bmo/ironic-inspector-password"
     content: |
       {{ INSPECTOR_PASSWORD }}
     mode: '0600'
 
 - name: Create and populate the bmo-ironic.env file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/bmo/ironic.env"
+    dest: "bmo/ironic.env"
     content: |
       DEPLOY_KERNEL_URL=http://{{ PROVISIONING_IP }}:{{ HTTP_PORT }}/images/ironic-python-agent.kernel
       DEPLOY_RAMDISK_URL=http://{{ PROVISIONING_IP }}:{{ HTTP_PORT }}/images/ironic-python-agent.initramfs
@@ -259,7 +281,7 @@
 
 - name: Create and populate the bmo-kustomization.yaml file
   ansible.builtin.copy:
-    dest: "~/.config/metal3/bmo/kustomization.yaml"
+    dest: "bmo/kustomization.yaml"
     content: |
       apiVersion: kustomize.config.k8s.io/v1beta1
       kind: Kustomization
@@ -273,29 +295,29 @@
       - name: ironic
         behavior: create
         envs:
-        - ~/.config/metal3/bmo/ironic.env
+        - ironic.env
       generatorOptions:
         disableNameSuffixHash: true
       secretGenerator:
       - name: ironic-credentials
         files:
-        - username=~/.config/metal3/bmo/ironic-username
-        - password=~/.config/metal3/bmo/ironic-password
+        - username=ironic-username
+        - password=ironic-password
       - name: ironic-inspector-credentials
         files:
-        - username=~/.config/metal3/bmo/ironic-inspector-username
-        - password=~/.config/metal3/bmo/ironic-inspector-password
+        - username=ironic-inspector-username
+        - password=ironic-inspector-password
     mode: '0600'
 
 - name: Check the manifests with bmo kustomize
   become: yes
   become_method: sudo
-  shell: kubectl create -k ~/.config/metal3/bmo --dry-run=client -o yaml
+  shell: kubectl create -k bmo --dry-run=client -o yaml
 
 - name: Apply bmo kustomize manifests
   become: yes
   become_method: sudo
-  shell: kubectl apply -k ~/.config/metal3/bmo
+  shell: kubectl apply -k bmo
 
 - name: Download clusterctl binary
   become: yes
