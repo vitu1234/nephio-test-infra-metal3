@@ -2,3 +2,7 @@
 .vagrant/
 *.bak
 *.pyc
+
+e2e/provision/playbooks/bmo/
+e2e/provision/playbooks/ironic/
+e2e/provision/playbooks/disk-images/

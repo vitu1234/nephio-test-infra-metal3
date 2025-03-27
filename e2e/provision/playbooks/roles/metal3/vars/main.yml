@@ -6,6 +6,7 @@ service_names:
 - "kubelet"
 
 clusterctl_version: v1.8.3
+CERT_MANAGER_VERSION: v1.14.3
 
 #DHCP server
 # metal3 configurations
@@ -18,21 +19,21 @@ DHCP_IGNORE: tag:!known
 # Listen on this IP (management computer)
 PROVISIONING_IP: 192.168.3.99
 # Give out IP addresses in this range
-DHCP_RANGE: 192.168.3.5,192.168.3.14
+DHCP_RANGE: 192.168.3.100,192.168.3.149
 GATEWAY_IP: 192.168.3.1
 
 # Image server
 IMG_URL: https://artifactory.nordix.org/artifactory/metal3/images/k8s_v1.29/UBUNTU_9_NODE_IMAGE_K8S_v1.29
 
 # Ironic configurations
-IRONIC_USERNAME: admin
-IRONIC_PASSWORD: tp876957
-INSPECTOR_USERNAME: admin
-INSPECTOR_PASSWORD: tp876957
+IRONIC_USERNAME: ubuntu
+IRONIC_PASSWORD: ubuntu
+INSPECTOR_USERNAME: ubuntu
+INSPECTOR_PASSWORD: ubuntu
 
 # In this section we will create a file containing environment variables used to configure Ironic and related components. We will call the file ironic_bmo.env. It looks like this for the baremetal lab:
 # This is the interface inside the container
-PROVISIONING_INTERFACE: eno2
+PROVISIONING_INTERFACE: eno1
 IRONIC_KERNEL_PARAMS: console=ttyS0
 # CACHEURL: http://192.168.40.241
 #  IP where the BMCs can access Ironic to get the virtualmedia boot image.
